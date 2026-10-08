@@ -1,0 +1,14 @@
+apiVersion: inference.opendatahub.io/v1beta1
+kind: ExternalProvider
+metadata:
+  name: aws-bedrock
+  namespace: models-as-a-service
+spec:
+  type: AWSBedrock
+  endpoint: https://bedrock.us-east-1.amazonaws.com
+  auth:
+    type: IAM
+    credentials:
+      accessKey: <your-access-key>
+      secretKey: <your-secret-key>
+

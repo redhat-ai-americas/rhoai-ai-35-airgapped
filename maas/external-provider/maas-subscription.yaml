@@ -1,0 +1,13 @@
+apiVersion: inference.opendatahub.io/v1beta1
+kind: MaaSSubscription
+metadata:
+  name: bedrock-subscription
+  namespace: models-as-a-service
+spec:
+  modelRefs:
+    - aws-bedrock-model
+  groups:
+    - data-scientists
+  tokenLimits:
+    tokensPerMinute: 1000
+

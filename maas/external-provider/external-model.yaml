@@ -1,0 +1,12 @@
+apiVersion: inference.opendatahub.io/v1beta1
+kind: ExternalModel
+metadata:
+  name: aws-bedrock-model
+  namespace: models-as-a-service
+spec:
+  name: bedrock-model
+  externalProviderRefs:
+    - aws-bedrock
+  apiFormat: OpenAI
+  requestPath: /v1/chat/completions
+

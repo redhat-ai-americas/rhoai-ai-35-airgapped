@@ -1,0 +1,11 @@
+apiVersion: inference.opendatahub.io/v1beta1
+kind: MaaSAuthPolicy
+metadata:
+  name: bedrock-auth-policy
+  namespace: models-as-a-service
+spec:
+  groups:
+    - data-scientists
+  modelRefs:
+    - aws-bedrock-model
+
