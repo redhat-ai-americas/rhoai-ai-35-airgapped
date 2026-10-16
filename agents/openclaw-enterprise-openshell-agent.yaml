@@ -1,0 +1,277 @@
+# Deploy an agent from scratch on OpenShift AI.
+#
+# What this file is
+# -----------------
+# One manifest you apply with `oc apply -f`. It creates:
+#   1. The project namespace OpenShell will use as the agent workspace.
+#   2. The agent program ConfigMap. This is where Gen AI Studio "View code"
+#      output is pasted.
+#   3. The OpenShell Sandbox that runs the agent. OpenShift AI lists this
+#      Sandbox as a running agent deployment.
+#   4. The Agent Catalog entry. AI hub → Agents shows this card.
+#
+# Defaults fixed by this file
+# ---------------------------
+#   Agentic sandbox : OpenShell
+#                     Sandbox API agents.x-k8s.io/v1alpha1
+#                     Runtime class   openshell-sandbox
+#   Harness         : OpenClaw Enterprise, native dedicated harness
+#                     Embedded OpenClaw is not used. The OpenShell sandbox
+#                     driver rejects embedded OpenClaw.
+#
+# Apply
+# -----
+#   oc apply -f agents/openclaw-enterprise-openshell-agent.yaml
+#
+# Prerequisites already installed on the cluster
+# ----------------------------------------------
+#   - OpenShell gateway and the Agent Sandbox controller
+#   - RuntimeClass openshell-sandbox
+#   - OpenClaw Enterprise harness image reachable from this cluster
+#   - Dashboard flags, if you want the UI surfaces:
+#       agentsCatalog: "true"          AI hub → Agents
+#       agentConfigManagement: "true"  Gen AI Studio saved agents / View code
+#
+# ----------------------------------------------------------------------------
+# 1. Workspace namespace
+#    OpenShell operator mode only creates a workspace in a namespace that
+#    carries this label. The Sandbox below must live in this same namespace.
+# ----------------------------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: llm
+  labels:
+    openshell.ai/openclaw-workspace: "true"
+---
+# ----------------------------------------------------------------------------
+# 2. Agent program
+#
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+# GEN AI STUDIO — VIEW CODE
+# Inject the playground code here. Do not change anything outside this
+# ConfigMap when you are only bringing a playground session onto the agent.
+#
+# In Gen AI Studio open the playground, click "View code", and copy the
+# generated snippet. Paste the pieces into the matching keys below:
+#
+#   system-prompt    instructions / system message from View code
+#   model            model id selected in the playground
+#   inference.json   temperature, top_p, max_tokens, and any other parameters
+#   mcp.json         MCP servers selected in the playground
+#   rag.json         knowledge sources selected in the playground
+#   agent.py         Python (or other) sample from the View code window,
+#                    if you are using that sample as the agent entrypoint
+#
+# The Sandbox mounts this ConfigMap read-only at /etc/openclaw/agent.
+# The OpenClaw Enterprise harness reads it on startup. Replacing this
+# ConfigMap and restarting the Sandbox is how a new View code export
+# reaches the running agent. It does not rebuild the harness image.
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+# ----------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: customer-support-agent-program
+  namespace: llm
+  labels:
+    app.kubernetes.io/name: customer-support-agent
+    app.kubernetes.io/component: agent-program
+    # Tells anyone reading the object which sandbox and harness it targets.
+    openshell.ai/sandbox: openshell
+    openclaw.ai/harness: openclaw-enterprise
+data:
+  # --- begin View code injection -------------------------------------------
+  system-prompt: |
+    You are a customer support agent. Replace this text with the system
+    message from Gen AI Studio → View code.
+
+  model: "REPLACE_WITH_VIEW_CODE_MODEL_ID"
+
+  inference.json: |
+    {
+      "temperature": 0.2,
+      "top_p": 1,
+      "max_tokens": 1024
+    }
+
+  mcp.json: |
+    {
+      "servers": []
+    }
+
+  rag.json: |
+    {
+      "knowledge_sources": []
+    }
+
+  agent.py: |
+    # Replace this file with the Python sample from View code when the
+    # playground was exported as Python. The harness runs this file only
+    # when HARNESS_ENTRYPOINT is set to /etc/openclaw/agent/agent.py.
+    print("replace with View code output")
+  # --- end View code injection ---------------------------------------------
+---
+# ----------------------------------------------------------------------------
+# 3. OpenShell Sandbox
+#    This is the agent deployment. OpenShell creates the pod from spec.podTemplate.
+#    The dashboard running-agent list reads Sandbox objects in the project.
+#
+#    Sandbox default : OpenShell          (runtimeClassName: openshell-sandbox)
+#    Harness default : OpenClaw Enterprise (image + HARNESS env vars below)
+# ----------------------------------------------------------------------------
+apiVersion: agents.x-k8s.io/v1alpha1
+kind: Sandbox
+metadata:
+  name: customer-support-agent
+  namespace: llm
+  labels:
+    app.kubernetes.io/name: customer-support-agent
+    app.kubernetes.io/component: agent
+    app.kubernetes.io/managed-by: openshell
+    # Sandbox implementation. Leave this as openshell.
+    openshell.ai/sandbox: openshell
+    # Harness implementation. Leave this as openclaw-enterprise.
+    openclaw.ai/harness: openclaw-enterprise
+  annotations:
+    # Shown next to the running Sandbox. Not the Agent Catalog card.
+    openshift.io/description: "Customer support agent. OpenShell sandbox, OpenClaw Enterprise harness."
+spec:
+  podTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: customer-support-agent
+        openshell.ai/sandbox: openshell
+        openclaw.ai/harness: openclaw-enterprise
+    spec:
+      # OpenShell's sandbox runtime. Do not change this when the sandbox
+      # default is OpenShell.
+      runtimeClassName: openshell-sandbox
+      restartPolicy: Always
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: harness
+          # OpenClaw Enterprise native harness image.
+          # Replace the registry path with the image available in this cluster.
+          image: REPLACE_WITH_OPENCLAW_ENTERPRISE_HARNESS_IMAGE:tag
+          imagePullPolicy: IfNotPresent
+          env:
+            # Harness selection. OpenShell requires the dedicated native
+            # OpenClaw harness. Do not set this to the embedded gateway harness.
+            - name: HARNESS
+              value: openclaw-enterprise
+            - name: SANDBOX
+              value: openshell
+            - name: HARNESS_CONFIG_DIR
+              value: /etc/openclaw/agent
+            # Point this at agent.py only after you paste a View code Python
+            # sample into the ConfigMap. Leave it unset to use the harness
+            # built-in entrypoint plus system-prompt and inference.json.
+            # - name: HARNESS_ENTRYPOINT
+            #   value: /etc/openclaw/agent/agent.py
+            - name: OPENCLAW_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: customer-support-agent-program
+                  key: model
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # View code content from the ConfigMap above.
+            - name: agent-program
+              mountPath: /etc/openclaw/agent
+              readOnly: true
+            # OpenShell writable workspace. The harness must not write
+            # outside this mount when the root filesystem is read-only.
+            - name: workspace
+              mountPath: /sandbox/enterprise
+              subPath: workspace
+      volumes:
+        - name: agent-program
+          configMap:
+            name: customer-support-agent-program
+        - name: workspace
+          emptyDir: {}
+---
+# ----------------------------------------------------------------------------
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+# AGENT CATALOG REGISTRATION
+#
+# AI hub → Agents does not start the agent. The Sandbox above is what runs.
+# This ConfigMap is the catalog card for that Sandbox.
+#
+# The catalog card shows three fields. They are the three keys below:
+#   description   card text
+#   framework     filter value; this agent is OpenClaw
+#   README.md     the detail page
+#
+# The Agents page stays hidden until the cluster dashboard flag
+# agentsCatalog is "true". The running-agent list is separate: it lists
+# the Sandbox, not this ConfigMap.
+#
+# Dashboard flag, applied once per cluster, not per agent:
+#
+#   apiVersion: opendatahub.io/v1alpha
+#   kind: OdhDashboardConfig
+#   metadata:
+#     name: odh-dashboard-config
+#     namespace: redhat-ods-applications
+#   spec:
+#     dashboardConfig:
+#       agentsCatalog: "true"
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+# ----------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: customer-support-agent-catalog
+  namespace: llm
+  labels:
+    app.kubernetes.io/name: customer-support-agent
+    app.kubernetes.io/component: catalog-entry
+    # Same identity as the Sandbox, so the card and the running agent match.
+    openshell.ai/sandbox: openshell
+    openclaw.ai/harness: openclaw-enterprise
+  annotations:
+    # Name of the Sandbox this card deploys.
+    opendatahub.io/agent-sandbox: customer-support-agent
+data:
+  # --- begin Agent Catalog registration fields -----------------------------
+  displayName: "Customer support agent"
+  description: "Answers support questions with the playground model, MCP servers, and knowledge sources."
+  framework: "OpenClaw"
+  README.md: |
+    # Customer support agent
+
+    Sandbox: OpenShell
+    Harness: OpenClaw Enterprise
+
+    The agent program is ConfigMap `customer-support-agent-program`.
+    Replace that ConfigMap with a new Gen AI Studio View code export
+    to change the prompt, model, MCP servers, or knowledge sources.
+  # --- end Agent Catalog registration fields -------------------------------
